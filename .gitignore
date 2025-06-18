@@ -1,0 +1,16 @@
+# .gitignore for Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.log
+*.sqlite3
+*.db
+.env
+.venv/
+env/
+venv/
