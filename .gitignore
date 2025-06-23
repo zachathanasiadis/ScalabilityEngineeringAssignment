@@ -1,4 +1,5 @@
 # .gitignore for Python
+rockyou.txt
 __pycache__/
 *.py[cod]
 *.so
