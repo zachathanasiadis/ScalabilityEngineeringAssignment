@@ -1,0 +1,59 @@
+import json
+from db.db_manager import DatabaseManager
+
+class TaskQueue:
+    def __init__(self, db_manager=None):
+        """Initialize the TaskQueue with a database manager"""
+        self.db_manager = db_manager or DatabaseManager()
+
+    def connect(self):
+        """Connect to the database"""
+        self.db_manager.connect()
+
+    def close(self):
+        """Close database connection"""
+        self.db_manager.close()
+
+    def initialize(self):
+        """Initialize the queue and ensure required tables exist"""
+        self.connect()
+        self.db_manager.create_tables()
+
+    def add_task(self, task_type, parameters=None):
+        """Add a task to the queue
+
+        Args:
+            task_type (str): Type of task (e.g., 'fibonacci')
+            parameters (dict): Parameters needed for the task
+
+        Returns:
+            int: ID of the created task
+        """
+        if parameters and not isinstance(parameters, str):
+            parameters = json.dumps(parameters)
+
+        return self.db_manager.add_task(task_type, parameters)
+
+    def get_next_task(self):
+        """Get the next task from the queue
+
+        Returns:
+            dict: Task information including id, task_type, and parameters
+        """
+        return self.db_manager.get_next_task()
+
+    def complete_task(self, task_id, result=None, error=None):
+        """Mark a task as completed or failed
+
+        Args:
+            task_id (int): ID of the task
+            result: The result of the task execution
+            error (str): Error message if the task failed
+
+        Returns:
+            bool: Success status
+        """
+        if result and not isinstance(result, str):
+            result = json.dumps(result)
+
+        return self.db_manager.complete_task(task_id, result, error)
