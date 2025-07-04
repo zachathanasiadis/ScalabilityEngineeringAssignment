@@ -8,7 +8,7 @@ class TaskQueue:
 
     def connect(self):
         """Connect to the database"""
-        self.db_manager.connect()
+        return self.db_manager.connect()
 
     def close(self):
         """Close database connection"""
@@ -16,8 +16,11 @@ class TaskQueue:
 
     def initialize(self):
         """Initialize the queue and ensure required tables exist"""
-        self.connect()
-        self.db_manager.create_tables()
+        if self.connect():
+            result = self.db_manager.create_tables()
+            self.close()
+            return result
+        return False
 
     def add_task(self, task_type, parameters=None):
         """Add a task to the queue
@@ -32,6 +35,7 @@ class TaskQueue:
         if parameters and not isinstance(parameters, str):
             parameters = json.dumps(parameters)
 
+        # The db_manager now handles connection internally
         return self.db_manager.add_task(task_type, parameters)
 
     def get_next_task(self):

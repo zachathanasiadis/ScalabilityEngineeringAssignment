@@ -13,6 +13,7 @@ class DatabaseManager:
         self.db_port = db_port or os.getenv("DB_PORT", "")
         self.connection = None
         self.cursor = None
+        # Don't connect in __init__, let the user explicitly call connect()
 
     def connect(self):
         """Connect to the PostgreSQL database server"""
@@ -21,8 +22,12 @@ class DatabaseManager:
             self.connection = psycopg.connect(conn_string)
             self.cursor = self.connection.cursor()
             print("Connected to the database successfully.")
+            return True
         except Exception as error:
             print(f"Error while connecting to PostgreSQL: {error}")
+            self.connection = None
+            self.cursor = None
+            return False
 
     def close(self):
         """Close the database connection"""
@@ -31,9 +36,15 @@ class DatabaseManager:
                 self.cursor.close()
             self.connection.close()
             print("Database connection closed.")
+        self.connection = None
+        self.cursor = None
 
     def create_tables(self):
         """Create necessary tables if they don't exist"""
+        if not self.connection or not self.cursor:
+            print("Not connected to database. Call connect() first.")
+            return False
+
         try:
             # Tasks table
             self.cursor.execute('''
@@ -63,14 +74,20 @@ class DatabaseManager:
 
             self.connection.commit()
             print("Tables created successfully.")
+            return True
         except Exception as error:
             print(f"Error while creating tables: {error}")
-            self.connection.rollback()
+            if self.connection:
+                self.connection.rollback()
+            return False
 
     def add_task(self, task_type, parameters=None):
         """Add a new task to the queue"""
-        try:
+        if not self.connection or not self.cursor:
+            print("Not connected to database. Call connect() first.")
+            return None
 
+        try:
             self.cursor.execute(
                 """
                 INSERT INTO tasks (task_type, parameters)
@@ -79,19 +96,27 @@ class DatabaseManager:
                 """,
                 (task_type, parameters)
             )
-            task_id = self.cursor.fetchone()[0]
+            result = self.cursor.fetchone()
+            if not result:
+                return None
+
+            task_id = result[0]
             self.connection.commit()
             print(f"Task added with ID: {task_id}")
             return task_id
         except Exception as error:
             print(f"Error while adding task: {error}")
-            self.connection.rollback()
+            if self.connection:
+                self.connection.rollback()
             return None
 
     def get_next_task(self):
         """Get the next pending task from the queue"""
-        try:
+        if not self.connection or not self.cursor:
+            print("Not connected to database. Call connect() first.")
+            return None
 
+        try:
             self.cursor.execute(
                 """
                 SELECT id, task_type, parameters
@@ -118,13 +143,17 @@ class DatabaseManager:
             return None
         except Exception as error:
             print(f"Error while getting next task: {error}")
-            self.connection.rollback()
+            if self.connection:
+                self.connection.rollback()
             return None
 
     def complete_task(self, task_id, result=None, error=None):
         """Mark a task as completed or failed"""
-        try:
+        if not self.connection or not self.cursor:
+            print("Not connected to database. Call connect() first.")
+            return False
 
+        try:
             status = 'completed' if error is None else 'failed'
             self.cursor.execute(
                 """
@@ -139,13 +168,17 @@ class DatabaseManager:
             return True
         except Exception as error:
             print(f"Error while completing task: {error}")
-            self.connection.rollback()
+            if self.connection:
+                self.connection.rollback()
             return False
 
     def register_worker(self, worker_id):
         """Register a new worker or update existing worker"""
-        try:
+        if not self.connection or not self.cursor:
+            print("Not connected to database. Call connect() first.")
+            return None
 
+        try:
             self.cursor.execute(
                 """
                 INSERT INTO workers (worker_id, status, last_heartbeat)
@@ -156,19 +189,27 @@ class DatabaseManager:
                 """,
                 (worker_id,)
             )
-            worker_db_id = self.cursor.fetchone()[0]
+            result = self.cursor.fetchone()
+            if not result:
+                return None
+
+            worker_db_id = result[0]
             self.connection.commit()
             print(f"Worker {worker_id} registered with ID: {worker_db_id}")
             return worker_db_id
         except Exception as error:
             print(f"Error while registering worker: {error}")
-            self.connection.rollback()
+            if self.connection:
+                self.connection.rollback()
             return None
 
     def update_worker_status(self, worker_id, status, task_id=None):
         """Update worker status and current task"""
-        try:
+        if not self.connection or not self.cursor:
+            print("Not connected to database. Call connect() first.")
+            return False
 
+        try:
             self.cursor.execute(
                 """
                 UPDATE workers
@@ -181,5 +222,6 @@ class DatabaseManager:
             return True
         except Exception as error:
             print(f"Error while updating worker status: {error}")
-            self.connection.rollback()
+            if self.connection:
+                self.connection.rollback()
             return False
