@@ -1,9 +1,20 @@
 import os
-import psycopg
+import logging
 from dotenv import load_dotenv
 from .connection_limiter import create_limited_connection
 
 load_dotenv()
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(message)s",
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler("db_manager.log")
+    ]
+)
+logger = logging.getLogger(__name__)
 
 class DatabaseManager:
     def __init__(self, db_name=None, db_user=None, db_password=None, db_host=None, db_port=None):
@@ -25,24 +36,14 @@ class DatabaseManager:
             self.db_port
         )
 
-        if result["success"]:
+        if not result["error"]:
             self.connection = result["connection"]
             self.cursor = self.connection.cursor()
             return {"success": True, "error": None}
         else:
             self.connection = None
             self.cursor = None
-            return {
-                "success": False,
-                "error": result["error"],
-                "details": {
-                    "db_name": self.db_name,
-                    "db_user": self.db_user,
-                    "db_host": self.db_host,
-                    "db_port": self.db_port,
-                    **result.get("details", {})
-                }
-            }
+            return {"success": True, "error": result["error"]}
 
     def close(self):
         """Close the database connection"""
@@ -50,14 +51,14 @@ class DatabaseManager:
             if self.cursor:
                 self.cursor.close()
             self.connection.close()
-            print("Database connection closed.")
+            logger.info("Database connection closed.")
         self.connection = None
         self.cursor = None
 
     def create_tables(self):
         """Create necessary tables if they don't exist"""
         if not self.connection or not self.cursor:
-            print("Not connected to database. Call connect() first.")
+            logger.error("Not connected to database. Call connect() first.")
             return False
 
         try:
@@ -88,10 +89,10 @@ class DatabaseManager:
             ''')
 
             self.connection.commit()
-            print("Tables created successfully.")
+            logger.info("Tables created successfully.")
             return True
         except Exception as error:
-            print(f"Error while creating tables: {error}")
+            logger.error(f"Error while creating tables: {error}")
             if self.connection:
                 self.connection.rollback()
             return False
@@ -99,7 +100,7 @@ class DatabaseManager:
     def add_task(self, task_type, parameters=None):
         """Add a new task to the queue"""
         if not self.connection or not self.cursor:
-            print("Not connected to database. Call connect() first.")
+            logger.error("Not connected to database. Call connect() first.")
             return None
 
         try:
@@ -117,10 +118,10 @@ class DatabaseManager:
 
             task_id = result[0]
             self.connection.commit()
-            print(f"Task added with ID: {task_id}")
+            logger.info(f"Task added with ID: {task_id}")
             return task_id
         except Exception as error:
-            print(f"Error while adding task: {error}")
+            logger.error(f"Error while adding task: {error}")
             if self.connection:
                 self.connection.rollback()
             return None
@@ -128,7 +129,7 @@ class DatabaseManager:
     def get_next_task(self):
         """Get the next pending task from the queue"""
         if not self.connection or not self.cursor:
-            print("Not connected to database. Call connect() first.")
+            logger.error("Not connected to database. Call connect() first.")
             return None
 
         try:
@@ -157,7 +158,7 @@ class DatabaseManager:
                 return {"id": task_id, "task_type": task_type, "parameters": parameters}
             return None
         except Exception as error:
-            print(f"Error while getting next task: {error}")
+            logger.error(f"Error while getting next task: {error}")
             if self.connection:
                 self.connection.rollback()
             return None
@@ -165,7 +166,7 @@ class DatabaseManager:
     def complete_task(self, task_id, result=None, error=None):
         """Mark a task as completed or failed"""
         if not self.connection or not self.cursor:
-            print("Not connected to database. Call connect() first.")
+            logger.error("Not connected to database. Call connect() first.")
             return False
 
         try:
@@ -179,10 +180,10 @@ class DatabaseManager:
                 (status, result, error, task_id)
             )
             self.connection.commit()
-            print(f"Task {task_id} marked as {status}")
+            logger.info(f"Task {task_id} marked as {status}")
             return True
         except Exception as error:
-            print(f"Error while completing task: {error}")
+            logger.error(f"Error while completing task: {error}")
             if self.connection:
                 self.connection.rollback()
             return False
@@ -190,7 +191,7 @@ class DatabaseManager:
     def register_worker(self, worker_id):
         """Register a new worker or update existing worker"""
         if not self.connection or not self.cursor:
-            print("Not connected to database. Call connect() first.")
+            logger.error("Not connected to database. Call connect() first.")
             return None
 
         try:
@@ -210,10 +211,10 @@ class DatabaseManager:
 
             worker_db_id = result[0]
             self.connection.commit()
-            print(f"Worker {worker_id} registered with ID: {worker_db_id}")
+            logger.info(f"Worker {worker_id} registered with ID: {worker_db_id}")
             return worker_db_id
         except Exception as error:
-            print(f"Error while registering worker: {error}")
+            logger.error(f"Error while registering worker: {error}")
             if self.connection:
                 self.connection.rollback()
             return None
@@ -221,7 +222,7 @@ class DatabaseManager:
     def update_worker_status(self, worker_id, status, task_id=None):
         """Update worker status and current task"""
         if not self.connection or not self.cursor:
-            print("Not connected to database. Call connect() first.")
+            logger.error("Not connected to database. Call connect() first.")
             return False
 
         try:
@@ -236,7 +237,7 @@ class DatabaseManager:
             self.connection.commit()
             return True
         except Exception as error:
-            print(f"Error while updating worker status: {error}")
+            logger.error(f"Error while updating worker status: {error}")
             if self.connection:
                 self.connection.rollback()
             return False

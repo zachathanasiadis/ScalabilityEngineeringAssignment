@@ -1,17 +1,22 @@
-from fastapi import FastAPI, BackgroundTasks, HTTPException
+from fastapi import FastAPI, HTTPException, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-import hashlib
 import os
-import time
 import logging
-from datetime import datetime
 from queue_service.queue_manager import TaskQueue
 from db.db_manager import DatabaseManager
+from typing import Dict, Any, Optional, Tuple, Union
+from contextlib import contextmanager
+
+# Custom exceptions
+class ConnectionLimitExceeded(Exception):
+    """Raised when database connection limit is exceeded"""
+    pass
 
 # Configure logging
 logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+    format="%(message)s",
     handlers=[
         logging.StreamHandler(),
         logging.FileHandler("app.log")
@@ -53,250 +58,171 @@ task_queue = TaskQueue(db_manager)
 # Create tables if they don't exist
 logger.info(f"[{APP_NAME}] Attempting to connect to database for table creation")
 connection_result = db_manager.connect()
-if connection_result["success"]:
+if not connection_result["error"]:
     logger.info(f"[{APP_NAME}] Database connection successful, creating tables")
     db_manager.create_tables()
     db_manager.close()
     logger.info(f"[{APP_NAME}] Database tables created successfully")
 else:
     logger.error(f"[{APP_NAME}] Failed to connect to database at startup: {connection_result['error']}")
-    logger.error(f"[{APP_NAME}] Connection details: {connection_result['details']}")
-    logger.error(f"[{APP_NAME}] Failed to connect to database during startup. Please check your database configuration.")
 
 logger.info(f"[{APP_NAME}] Application initialization complete")
+
 
 class InputString(BaseModel):
     string: str
 
 
-@app.post("/hash/sha256")
-def convert_str_to_sha256(input: InputString):
-    string = input.string
-    logger.info(f"[{APP_NAME}] Received SHA256 request for string: {string}")
-
-    # Check cache first
-    cache_key = f"sha256:{string}"
+# Shared utility functions
+def check_cache(hash_type: str, string: str) -> Optional[Dict[str, Any]]:
+    """Check if result exists in cache and return it"""
+    cache_key = f"{hash_type}:{string}"
     cached_result = shared_cache.get(cache_key)
 
     if cached_result:
-        logger.info(f"[{APP_NAME}] SHA256 result found in cache for string: {string}")
+        logger.info(f"[{APP_NAME}] {hash_type.upper()} result found in cache for string: {string}")
         return {"result": cached_result, "source": "cache"}
 
-    # Establish a new connection for this request
+    return None
+
+
+def cache_result(hash_type: str, result: Dict[str, Any], ttl: int = 3600) -> None:
+    """Cache a completed result"""
+    original_string = result.get('original_string')
+    if not original_string:
+        return
+
+    cache_key = f"{hash_type}:{original_string}"
+    shared_cache.set(cache_key, result, ttl=ttl)
+    logger.info(f"[{APP_NAME}] Cached {hash_type.upper()} hash for string: {original_string}")
+
+
+@contextmanager
+def get_database_connection():
+    """Context manager for database connections"""
+    logger.info(f"[{APP_NAME}] Attempting to get database connection...")
     connection_result = db_manager.connect()
-    if not connection_result["success"]:
-        error_details = connection_result["details"]
-        logger.error(f"[{APP_NAME}] Database connection failed for SHA256: {connection_result['error']}. "
-                   f"Trying to connect to {error_details['db_name']}@{error_details['db_host']}:{error_details['db_port']} "
-                   f"as user '{error_details['db_user']}'")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Database connection failed: {connection_result['error']}. "
-                   f"Trying to connect to {error_details['db_name']}@{error_details['db_host']}:{error_details['db_port']} "
-                   f"as user '{error_details['db_user']}'"
-        )
+    logger.info(f"[{APP_NAME}] Database connection attempt result: success={connection_result['success']}")
 
+    if connection_result["error"]:
+        logger.error(f"[{APP_NAME}] Database connection failed: {connection_result['error']}")
+        raise HTTPException(status_code=500, detail=f"Database connection failed: {connection_result['error']}")
+
+    logger.info(f"[{APP_NAME}] Database connection successful, entering context")
     try:
-        # Add task to queue
-        logger.info(f"[{APP_NAME}] Adding task to queue for SHA256: {string}")
-        task_id = task_queue.add_task('sha256', {'string': string})
-        logger.info(f"[{APP_NAME}] Task ID: {task_id}")
-
-        if task_id is None:
-            logger.error(f"[{APP_NAME}] Failed to add task to queue for SHA256: {string}")
-            raise HTTPException(status_code=500, detail="Failed to add task to queue")
-
-        logger.info(f"[{APP_NAME}] SHA256 task {task_id} queued for string: {string}")
-        return {"task_id": task_id, "status": "queued", "message": "SHA256 hash calculation queued"}
+        yield db_manager
     finally:
-        # Always close the connection
+        logger.info(f"[{APP_NAME}] Closing database connection")
         db_manager.close()
+
+
+def add_task(request_type: str, string: str) -> Union[Dict[str, Any], JSONResponse]:
+    """Add a hash task to the queue"""
+    logger.info(f"[{APP_NAME}] add_task() called for {request_type.upper()}: {string}")
+    try:
+        with get_database_connection() as db:
+            logger.info(f"[{APP_NAME}] Inside database context, adding task to queue for {request_type.upper()}: {string}")
+            task_id = task_queue.add_task(request_type, {'string': string})
+            logger.info(f"[{APP_NAME}] Task ID: {task_id}")
+
+            if task_id is None:
+                logger.error(f"[{APP_NAME}] Failed to add task to queue for {request_type.upper()}: {string}")
+                raise HTTPException(status_code=500, detail="Failed to add task to queue")
+
+            logger.info(f"[{APP_NAME}] {request_type.upper()} task {task_id} queued for string: {string}")
+            return {
+                "task_id": task_id,
+                "status": "queued",
+                "message": f"{request_type.upper()} calculation queued"
+            }
+    except Exception as e:
+        logger.error(f"[{APP_NAME}] Unexpected error in add_task: {e}")
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {e}")
+
+
+def process_request(request_type: str, string: str) -> Union[Dict[str, Any], JSONResponse]:
+    """Generic function to process hash requests"""
+    logger.info(f"[{APP_NAME}] Received {request_type.upper()} request for string: {string}")
+
+    # Check cache first
+    logger.info(f"[{APP_NAME}] Checking cache for {request_type.upper()}: {string}")
+    try:
+        cached_result = check_cache(request_type, string)
+        if cached_result:
+            logger.info(f"[{APP_NAME}] Cache hit, returning cached result")
+            return cached_result
+        else:
+            logger.info(f"[{APP_NAME}] Cache miss, adding task to queue")
+            # Add task to queue
+            return add_task(request_type, string)
+    except Exception as e:
+        logger.error(f"[{APP_NAME}] Error checking cache: {e}")
+        raise HTTPException(status_code=500, detail=f"Cache error: {e}")
+
+
+
+
+# Hash endpoints using the generic function
+@app.post("/hash/sha256")
+def convert_str_to_sha256(input: InputString):
+    return process_request("sha256", input.string)
 
 
 @app.post("/hash/md5")
 def convert_str_to_md5(input: InputString):
-    string = input.string
-    logger.info(f"[{APP_NAME}] Received MD5 request for string: {string}")
+    return process_request("md5", input.string)
 
-    # Check cache first
-    cache_key = f"md5:{string}"
-    cached_result = shared_cache.get(cache_key)
-
-    if cached_result:
-        logger.info(f"[{APP_NAME}] MD5 result found in cache for string: {string}")
-        return {"result": cached_result, "source": "cache"}
-
-    # Establish a new connection for this request
-    connection_result = db_manager.connect()
-    if not connection_result["success"]:
-        error_details = connection_result["details"]
-        logger.error(f"[{APP_NAME}] Database connection failed for MD5: {connection_result['error']}. "
-                   f"Trying to connect to {error_details['db_name']}@{error_details['db_host']}:{error_details['db_port']} "
-                   f"as user '{error_details['db_user']}'")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Database connection failed: {connection_result['error']}. "
-                   f"Trying to connect to {error_details['db_name']}@{error_details['db_host']}:{error_details['db_port']} "
-                   f"as user '{error_details['db_user']}'"
-        )
-
-    try:
-        # Add task to queue
-        logger.info(f"[{APP_NAME}] Adding task to queue for MD5: {string}")
-        task_id = task_queue.add_task('md5', {'string': string})
-        logger.info(f"[{APP_NAME}] Task ID: {task_id}")
-
-        if task_id is None:
-            logger.error(f"[{APP_NAME}] Failed to add task to queue for MD5: {string}")
-            raise HTTPException(status_code=500, detail="Failed to add task to queue")
-
-        logger.info(f"[{APP_NAME}] MD5 task {task_id} queued for string: {string}")
-        return {"task_id": task_id, "status": "queued", "message": "MD5 hash calculation queued"}
-    finally:
-        # Always close the connection
-        db_manager.close()
 
 @app.post("/hash/argon2")
 def convert_str_to_argon2(input: InputString):
-    string = input.string
-    logger.info(f"[{APP_NAME}] Received argon2 request for string: {string}")
+    return process_request("argon2", input.string)
 
-    # Check cache first
-    cache_key = f"argon2:{string}"
-    cached_result = shared_cache.get(cache_key)
 
-    if cached_result:
-        logger.info(f"[{APP_NAME}] argon2 result found in cache for string: {string}")
-        return {"result": cached_result, "source": "cache"}
-
-    # Establish a new connection for this request
-    connection_result = db_manager.connect()
-    if not connection_result["success"]:
-        error_details = connection_result["details"]
-        logger.error(f"[{APP_NAME}] Database connection failed for argon2: {connection_result['error']}. "
-                   f"Trying to connect to {error_details['db_name']}@{error_details['db_host']}:{error_details['db_port']} "
-                   f"as user '{error_details['db_user']}'")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Database connection failed: {connection_result['error']}. "
-                   f"Trying to connect to {error_details['db_name']}@{error_details['db_host']}:{error_details['db_port']} "
-                   f"as user '{error_details['db_user']}'"
-        )
+def execute_safe_query(db_manager: DatabaseManager, query: str, params: Tuple, task_id: int):
+    """Execute a database query safely with error handling"""
+    if not db_manager.cursor:
+        logger.error(f"[{APP_NAME}] Database cursor lost during query for task {task_id}")
+        raise HTTPException(status_code=500, detail="Database connection lost")
 
     try:
-        # Add task to queue
-        task_id = task_queue.add_task('argon2', {'string': string})
-
-        if task_id is None:
-            logger.error(f"[{APP_NAME}] Failed to add task to queue for argon2: {string}")
-            raise HTTPException(status_code=500, detail="Failed to add task to queue")
-
-        logger.info(f"[{APP_NAME}] argon2 task {task_id} queued for string: {string}")
-        return {"task_id": task_id, "status": "queued", "message": "argon2 hash calculation queued"}
-    finally:
-        # Always close the connection
-        db_manager.close()
+        db_manager.cursor.execute(query, params)
+        return db_manager.cursor.fetchone()
+    except Exception as e:
+        logger.error(f"[{APP_NAME}] Database query error for task {task_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Database query error: {str(e)}")
 
 
-@app.get("/hashes")
-def get_hashes():
-    """Get all computed hashes from database and cache"""
-    logger.info(f"[{APP_NAME}] Received request to get all hashes")
-    # Connect to the database
-    connection_result = db_manager.connect()
-    if not connection_result["success"]:
-        error_details = connection_result["details"]
-        logger.error(f"[{APP_NAME}] Database connection failed for get_hashes: {connection_result['error']}. "
-                   f"Trying to connect to {error_details['db_name']}@{error_details['db_host']}:{error_details['db_port']} "
-                   f"as user '{error_details['db_user']}'")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Database connection failed: {connection_result['error']}. "
-                   f"Trying to connect to {error_details['db_name']}@{error_details['db_host']}:{error_details['db_port']} "
-                   f"as user '{error_details['db_user']}'"
-        )
+def parse_task_result(result: Any) -> Union[Dict[str, Any], str, None]:
+    """Parse task result from database"""
+    if not result:
+        return None
 
-    try:
-        # Query completed tasks from database
-        db_manager.cursor.execute("""
-            SELECT task_type, result
-            FROM tasks
-            WHERE status = 'completed' AND result IS NOT NULL
-        """)
-
-        completed_tasks = db_manager.cursor.fetchall()
-        logger.info(f"[{APP_NAME}] Retrieved {len(completed_tasks)} completed tasks from database")
-
-        sha256_hashes = {}
-        md5_hashes = {}
-
-        for task_type, result in completed_tasks:
-            if isinstance(result, str):
-                try:
-                    parsed_result = json.loads(result)
-                except json.JSONDecodeError:
-                    logger.warning(f"[{APP_NAME}] Skipping task with invalid JSON result: {result}")
-                    continue
-            else:
-                parsed_result = result
-
-            if isinstance(parsed_result, dict):
-                if task_type == 'sha256' and 'sha256_hash' in parsed_result and 'original_string' in parsed_result:
-                    sha256_hashes[parsed_result['original_string']] = parsed_result['sha256_hash']
-                    logger.info(f"[{APP_NAME}] Added SHA256 hash to result: {parsed_result['original_string']}")
-                elif task_type == 'md5' and 'md5_hash' in parsed_result and 'original_string' in parsed_result:
-                    md5_hashes[parsed_result['original_string']] = parsed_result['md5_hash']
-                    logger.info(f"[{APP_NAME}] Added MD5 hash to result: {parsed_result['original_string']}")
-
-        logger.info(f"[{APP_NAME}] Returning {len(sha256_hashes)} SHA256 and {len(md5_hashes)} MD5 hashes")
-        return {
-            "SHA256": sha256_hashes,
-            "MD5": md5_hashes,
-            "cache_stats": shared_cache.get_stats()
-        }
-    finally:
-        db_manager.close()
+    if isinstance(result, str):
+        try:
+            return json.loads(result)
+        except json.JSONDecodeError:
+            return result
+    else:
+        # Result might already be a dict from psycopg
+        return result
 
 
 @app.get("/task/{task_id}")
 def get_task_status(task_id: int):
     """Get the status of a specific task"""
     logger.info(f"[{APP_NAME}] Received request to get task status for ID: {task_id}")
-    # Connect to the database
-    connection_result = db_manager.connect()
-    if not connection_result["success"]:
-        error_details = connection_result["details"]
-        logger.error(f"[{APP_NAME}] Database connection failed for get_task_status: {connection_result['error']}. "
-                   f"Trying to connect to {error_details['db_name']}@{error_details['db_host']}:{error_details['db_port']} "
-                   f"as user '{error_details['db_user']}'")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Database connection failed: {connection_result['error']}. "
-                   f"Trying to connect to {error_details['db_name']}@{error_details['db_host']}:{error_details['db_port']} "
-                   f"as user '{error_details['db_user']}'"
-        )
 
-    try:
-        # Define a helper function for safe database query
-        def execute_query(query, params):
-            if not db_manager.cursor:
-                logger.error(f"[{APP_NAME}] Database cursor lost during task status query for task {task_id}")
-                raise HTTPException(status_code=500, detail="Database connection lost")
-            try:
-                db_manager.cursor.execute(query, params)
-                return db_manager.cursor.fetchone()
-            except Exception as e:
-                logger.error(f"[{APP_NAME}] Database query error for task {task_id}: {str(e)}")
-                raise HTTPException(status_code=500, detail=f"Database query error: {str(e)}")
-
-        # Query the task status using the helper
-        task = execute_query(
+    with get_database_connection() as db:
+        # Query the task status
+        task = execute_safe_query(
+            db,
             """
             SELECT id, task_type, status, result, error, created_at, started_at, completed_at
             FROM tasks
             WHERE id = %s
             """,
-            (task_id,)
+            (task_id,),
+            task_id
         )
 
         if task is None:
@@ -306,28 +232,12 @@ def get_task_status(task_id: int):
         task_id, task_type, status, result, error, created_at, started_at, completed_at = task
         logger.info(f"[{APP_NAME}] Retrieved task {task_id} with status: {status}")
 
-        # Parse the JSON result if available
-        parsed_result = None
-        if result:
-            if isinstance(result, str):
-                try:
-                    parsed_result = json.loads(result)
-                except json.JSONDecodeError:
-                    parsed_result = result
-            else:
-                # Result might already be a dict from psycopg
-                parsed_result = result
+        # Parse the result
+        parsed_result = parse_task_result(result)
 
         # Cache the result if completed successfully
         if status == 'completed' and parsed_result and isinstance(parsed_result, dict):
-            if task_type == 'md5' and 'md5_hash' in parsed_result and 'original_string' in parsed_result:
-                cache_key = f"md5:{parsed_result['original_string']}"
-                shared_cache.set(cache_key, parsed_result, ttl=3600)  # Cache for 1 hour
-                logger.info(f"[{APP_NAME}] Cached MD5 hash for string: {parsed_result['original_string']}")
-            elif task_type == 'sha256' and 'sha256_hash' in parsed_result and 'original_string' in parsed_result:
-                cache_key = f"sha256:{parsed_result['original_string']}"
-                shared_cache.set(cache_key, parsed_result, ttl=3600)  # Cache for 1 hour
-                logger.info(f"[{APP_NAME}] Cached SHA256 hash for string: {parsed_result['original_string']}")
+            cache_result(task_type, parsed_result)
 
         # Return task information
         logger.info(f"[{APP_NAME}] Returning task {task_id} info: {status}")
@@ -341,9 +251,6 @@ def get_task_status(task_id: int):
             "started_at": started_at,
             "completed_at": completed_at
         }
-
-    finally:
-        db_manager.close()
 
 
 @app.get("/health")

@@ -8,8 +8,8 @@ from queue_service.queue_manager import TaskQueue
 
 # Configure logging
 logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+    format="%(message)s",
     handlers=[
         logging.StreamHandler(),
         logging.FileHandler("worker.log")
@@ -78,7 +78,7 @@ class Worker:
             while self.running:
                 try:
                     # Get next task from queue
-                    logger.debug(f"[{self.worker_name}] Checking for new tasks...")
+                    #logger.debug(f"[{self.worker_name}] Checking for new tasks...")
                     task = self.task_queue.get_next_task()
 
                     if task:
@@ -114,7 +114,7 @@ class Worker:
                             logger.error(f"[{self.worker_name}] {error_msg}")
                             self.task_queue.complete_task(task_id, None, error_msg)
                     else:
-                        #logger.debug(f"[{self.worker_name}] No tasks available, waiting {self.polling_interval}s...")
+                       #logger.debug(f"[{self.worker_name}] No tasks available, waiting {self.polling_interval}s...")
                         time.sleep(self.polling_interval)
 
                 except Exception as e:

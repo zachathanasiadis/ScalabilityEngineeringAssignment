@@ -12,8 +12,8 @@ app = FastAPI()
 
 # --- Setup Logging ---
 logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s - %(levelname)s - %(message)s"
+    level=logging.INFO,
+    format="%(message)s"
 )
 logger = logging.getLogger("loadbalancer")
 
@@ -26,6 +26,9 @@ backends = [
 
 # Load balancing strategy configuration
 STRATEGY = os.getenv("LB_STRATEGY", "round_robin")  # Options: "round_robin", "least_connections"
+RATE_LIMIT_REQUESTS = int(os.getenv("RATE_LIMIT_REQUESTS", "30")) # requests per window
+RATE_LIMIT_WINDOW = int(os.getenv("RATE_LIMIT_WINDOW", "60")) # window size in seconds
+RATE_LIMIT_CLEANUP_INTERVAL = 120  # cleanup old entries every 2 minutes
 
 # Round-robin iterator
 backend_iter = itertools.cycle(backends)
@@ -35,11 +38,6 @@ backend_connections = {backend: 0 for backend in backends}
 
 # Create asyncio lock for concurrency-safe access
 lock = asyncio.Lock()
-
-# Rate limiting configuration
-RATE_LIMIT_REQUESTS = 60  # requests per window
-RATE_LIMIT_WINDOW = 60     # window size in seconds
-RATE_LIMIT_CLEANUP_INTERVAL = 300  # cleanup old entries every 5 minutes
 
 # Rate limiting storage: IP -> deque of request timestamps
 rate_limit_storage: Dict[str, Deque[float]] = defaultdict(deque)
@@ -135,11 +133,6 @@ async def rate_limited_load_balanced_proxy(request: Request, call_next):
         return Response(
             content=f"Rate limit exceeded. Maximum {RATE_LIMIT_REQUESTS} requests per {RATE_LIMIT_WINDOW} seconds.",
             status_code=429,
-            headers={
-                "X-RateLimit-Limit": str(RATE_LIMIT_REQUESTS),
-                "X-RateLimit-Window": str(RATE_LIMIT_WINDOW),
-                "Retry-After": str(RATE_LIMIT_WINDOW)
-            }
         )
 
     # Special handling for internal endpoints
@@ -169,28 +162,23 @@ async def rate_limited_load_balanced_proxy(request: Request, call_next):
                 url=url,
                 headers=headers,
                 content=body,
-                timeout=10.0
+                timeout=None
             )
 
         # Create a response with the same status code and headers
-        starlette_response = Response(
+        request_response = Response(
             content=response.content,
             status_code=response.status_code,
             headers=dict(response.headers)
         )
 
-        # Add rate limit headers to response
-        starlette_response.headers["X-RateLimit-Limit"] = str(RATE_LIMIT_REQUESTS)
-        starlette_response.headers["X-RateLimit-Window"] = str(RATE_LIMIT_WINDOW)
-        starlette_response.headers["X-RateLimit-Remaining"] = str(max(0, RATE_LIMIT_REQUESTS - len(rate_limit_storage[client_ip])))
-        starlette_response.headers["X-LB-Strategy"] = STRATEGY
-        starlette_response.headers["X-LB-Backend"] = backend
-
         logger.info(f"Response {response.status_code} from {backend} for {method} {path}")
-        return starlette_response
-    except httpx.RequestError as e:
-        logger.error(f"Error contacting backend {backend}: {e}")
-        return Response(content=f"Backend unreachable: {e}", status_code=502)
+        return request_response
+
+    except Exception as e:
+        logger.error(f"Error contacting backend retry{backend}: {e}")
+        return Response(content=f"Backend Error: {e}", status_code=502)
+
     finally:
         # Release backend connection for least connections strategy
         await release_backend(backend)

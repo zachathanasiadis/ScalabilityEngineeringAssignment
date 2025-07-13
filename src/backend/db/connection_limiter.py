@@ -7,8 +7,20 @@ by any component that needs to connect to the database.
 import os
 import time
 import random
+import logging
 import psycopg
 from typing import Dict, Any
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(message)s",
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler("connection_limiter.log")
+    ]
+)
+logger = logging.getLogger(__name__)
 
 
 class ConnectionLimiter:
@@ -16,29 +28,31 @@ class ConnectionLimiter:
 
     def __init__(self, conn_string: str):
         self.conn_string = conn_string
-        self.max_connections = int(os.getenv("DB_MAX_CONNECTIONS", "20"))
-        self.max_retries = int(os.getenv("DB_CONNECTION_RETRIES", "5"))
         self.base_backoff = float(os.getenv("DB_BASE_BACKOFF", "0.5"))
+        self.max_retries = int(os.getenv("DB_CONNECTION_RETRIES", "5"))
 
-    def _get_current_connection_count(self, temp_conn) -> int:
-        """Get the current number of database connections"""
-        try:
-            with temp_conn.cursor() as cursor:
-                cursor.execute("SELECT count(*) FROM pg_stat_activity WHERE state = 'active';")
-                return cursor.fetchone()[0]
-        except Exception as e:
-            print(f"Error getting connection count: {e}")
-            return 0
+    def _is_connection_limit_error(self, error: Exception) -> bool:
+        """Check if the error is due to connection limit being exceeded"""
+        error_str = str(error).lower()
+        connection_limit_messages = [
+            "too many connections for role"
+        ]
+        return any(msg in error_str for msg in connection_limit_messages)
 
     def _wait_with_backoff(self, attempt: int) -> None:
         """Exponential backoff with jitter"""
-        backoff_time = self.base_backoff * (2 ** attempt) + random.uniform(0, 0.5)
-        print(f"Database connection limit reached. Backing off for {backoff_time:.2f} seconds...")
+        backoff_time = self.base_backoff * (2 ** attempt) + random.uniform(0, 1)
+
+        logger.info(f"Database connection limit reached. Backing off for {backoff_time:.2f} seconds... (attempt {attempt + 1})")
         time.sleep(backoff_time)
 
     def connect_with_limit(self) -> Dict[str, Any]:
         """
         Establish a database connection with connection limiting.
+
+        This method relies on PostgreSQL's built-in max_connections limit.
+        When the limit is exceeded, PostgreSQL refuses the connection with
+        an error message, which we catch and handle with backoff.
 
         Returns:
             Dict containing:
@@ -47,72 +61,52 @@ class ConnectionLimiter:
             - error: str or None - Error message if connection failed
             - details: dict - Additional error details
         """
+
         for attempt in range(self.max_retries):
             try:
-                # First, try to establish a temporary connection to check current connections
-                temp_conn = psycopg.connect(self.conn_string)
+                # Attempt to connect directly - let PostgreSQL handle the limiting
+                conn = psycopg.connect(self.conn_string)
 
-                # Check current connection count
-                current_connections = self._get_current_connection_count(temp_conn)
+                logger.info(f"Connected to database successfully on attempt {attempt + 1}")
+                return {
+                    "connection": conn,
+                    "error": None
+                }
 
-                if current_connections >= self.max_connections:
-                    temp_conn.close()
-                    print(f"Connection limit reached ({current_connections}/{self.max_connections}). Attempt {attempt + 1}/{self.max_retries}")
+            except Exception as error:
+                error_msg = f"Error while connecting to PostgreSQL: {error}"
+                logger.error(error_msg)
+
+                # Check if this is a connection limit error
+                if self._is_connection_limit_error(error):
+                    logger.info(f"Connection limit reached. Attempt {attempt + 1}/{self.max_retries}")
 
                     if attempt < self.max_retries - 1:
                         self._wait_with_backoff(attempt)
                         continue
                     else:
-                        error_msg = f"Failed to connect after {self.max_retries} attempts. Database connection limit ({self.max_connections}) exceeded."
-                        print(error_msg)
+                        error_msg = f"Failed to connect after {self.max_retries} attempts. PostgreSQL connection limit exceeded."
+                        logger.error(error_msg)
                         return {
-                            "success": False,
                             "connection": None,
-                            "error": error_msg,
-                            "details": {
-                                "current_connections": current_connections,
-                                "max_connections": self.max_connections,
-                                "attempts": self.max_retries
-                            }
+                            "error": "connection_limit_exceeded",
                         }
-
-                # If we're under the limit, use the temporary connection as our main connection
-                print(f"Connected to database successfully. Connections: {current_connections}/{self.max_connections}")
-                return {
-                    "success": True,
-                    "connection": temp_conn,
-                    "error": None,
-                    "details": {
-                        "current_connections": current_connections,
-                        "max_connections": self.max_connections
-                    }
-                }
-
-            except Exception as error:
-                error_msg = f"Error while connecting to PostgreSQL: {error}"
-                print(error_msg)
-
-                if attempt < self.max_retries - 1:
-                    print(f"Retrying connection... Attempt {attempt + 2}/{self.max_retries}")
-                    self._wait_with_backoff(attempt)
-                    continue
                 else:
-                    return {
-                        "success": False,
-                        "connection": None,
-                        "error": str(error),
-                        "details": {
-                            "connection_string": self.conn_string,
-                            "attempts": self.max_retries
-                        }
-                    }
+                    # For non-connection-limit errors, still retry but with different handling
+                    logger.info(f"Non-connection-limit error occurred. Attempt {attempt + 1}/{self.max_retries}")
 
-        # This should never be reached, but added for completeness
+                    if attempt < self.max_retries - 1:
+                        # Shorter backoff for non-connection-limit errors
+                        time.sleep(self.base_backoff + random.uniform(0, 1))
+                        continue
+                    else:
+                        return {
+                            "connection": None,
+                            "error": "connection_error"
+                        }
         return {
-            "success": False,
             "connection": None,
-            "error": "Unexpected error: max retries exceeded without proper error handling",
-            "details": {"attempts": self.max_retries}
+            "error": "uknown_database_error"
         }
 
 

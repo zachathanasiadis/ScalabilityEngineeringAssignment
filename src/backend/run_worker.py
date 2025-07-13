@@ -2,8 +2,7 @@
 from db.db_manager import DatabaseManager
 from queue_service.queue_manager import TaskQueue
 from worker.worker import Worker
-from tasks.fibonacci import fibonacci_task
-from tasks.hash_tasks import md5_task, sha256_task
+from tasks.hash_tasks import md5_task, sha256_task, argon2_task
 
 def run_worker():
     """Initialize and run a worker process"""
@@ -21,9 +20,9 @@ def run_worker():
     worker = Worker(task_queue, db_manager, polling_interval=2)
 
     # Register task handlers
-    worker.register_task_handler('fibonacci', fibonacci_task)
     worker.register_task_handler('md5', md5_task)
     worker.register_task_handler('sha256', sha256_task)
+    worker.register_task_handler('argon2', argon2_task)
 
     print("Starting worker. Press Ctrl+C to stop.")
     worker.start()

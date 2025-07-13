@@ -15,17 +15,17 @@ from datetime import datetime, timedelta
 
 # Configure logging for cache operations
 logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+    format="%(message)s",
     handlers=[
         logging.StreamHandler(),
         logging.FileHandler("cache.log")
     ]
 )
-logger = logging.getLogger("shared_cache")
+logger = logging.getLogger(__name__)
 
 # Get app instance name for logging context
-APP_NAME = os.getenv("APP_NAME", "cache-unknown")
+APP_NAME = os.getenv("APP_NAME", "cache")
 
 @dataclass
 class CacheStats:
@@ -38,7 +38,7 @@ class CacheStats:
 class SharedCache:
     """Database-backed shared cache for multiple instances"""
 
-    def __init__(self, default_ttl: int = 500000, max_size: int = 10000):
+    def __init__(self, default_ttl: int = 3600, max_size: int = 10000):
         """
         Initialize the shared cache
 
@@ -75,7 +75,7 @@ class SharedCache:
             self.db_port
         )
 
-        if result["success"]:
+        if not result["error"]:
             return result["connection"]
         else:
             logger.error(f"[{APP_NAME}] Could not connect to database: {result['error']}")
@@ -83,7 +83,7 @@ class SharedCache:
 
     def _ensure_cache_table(self):
         """Create the cache table if it doesn't exist"""
-        logger.info(f"[{APP_NAME}] Ensuring cache table exists...")
+        logger.debug(f"[{APP_NAME}] Ensuring cache table exists...")
 
         connection = self._get_connection()
         if not connection:
@@ -110,7 +110,7 @@ class SharedCache:
                 """)
 
                 connection.commit()
-                logger.info(f"[{APP_NAME}] Cache table and index created successfully")
+                logger.debug(f"[{APP_NAME}] Cache table and index created successfully")
 
         except Exception as e:
             logger.error(f"[{APP_NAME}] Error creating cache table: {e}")
@@ -137,7 +137,7 @@ class SharedCache:
         """
         with self.lock:
             cache_key = self._generate_key(key)
-            logger.debug(f"[{APP_NAME}] Getting cache key: {cache_key}")
+            logger.info(f"[{APP_NAME}] Getting cache key: {cache_key}")
 
             connection = self._get_connection()
             if not connection:
@@ -156,7 +156,7 @@ class SharedCache:
                     result = cursor.fetchone()
 
                     if result is None:
-                        logger.debug(f"[{APP_NAME}] Cache miss for key: {cache_key}")
+                        logger.info(f"[{APP_NAME}] Cache miss for key: {cache_key}")
                         self.stats.misses += 1
                         return default
 
@@ -164,7 +164,7 @@ class SharedCache:
 
                     # Check if expired
                     if expires_at < datetime.now():
-                        logger.debug(f"[{APP_NAME}] Cache expired for key: {cache_key}")
+                        logger.info(f"[{APP_NAME}] Cache expired for key: {cache_key}")
                         # Clean up expired entry
                         cursor.execute("DELETE FROM cache_entries WHERE cache_key = %s", (cache_key,))
                         connection.commit()
@@ -182,7 +182,7 @@ class SharedCache:
                     # Deserialize and return the value
                     try:
                         value = json.loads(value_data)
-                        logger.debug(f"[{APP_NAME}] Cache hit for key: {cache_key}")
+                        logger.info(f"[{APP_NAME}] Cache hit for key: {cache_key}")
                         self.stats.hits += 1
                         return value
                     except json.JSONDecodeError as e:
@@ -214,7 +214,7 @@ class SharedCache:
             ttl = ttl or self.default_ttl
             expires_at = datetime.now() + timedelta(seconds=ttl)
 
-            logger.debug(f"[{APP_NAME}] Setting cache key: {cache_key} with TTL: {ttl}s")
+            logger.info(f"[{APP_NAME}] Setting cache key: {cache_key} with TTL: {ttl}s")
 
             connection = self._get_connection()
             if not connection:
@@ -247,7 +247,7 @@ class SharedCache:
 
                     connection.commit()
                     self.stats.sets += 1
-                    logger.debug(f"[{APP_NAME}] Successfully set cache key: {cache_key}")
+                    logger.info(f"[{APP_NAME}] Successfully set cache key: {cache_key}")
                     return True
 
             except Exception as e:
@@ -263,29 +263,10 @@ class SharedCache:
             cursor.execute("DELETE FROM cache_entries WHERE expires_at < CURRENT_TIMESTAMP")
             deleted_count = cursor.rowcount
             if deleted_count > 0:
-                logger.debug(f"[{APP_NAME}] Cleaned up {deleted_count} expired cache entries")
+                logger.info(f"[{APP_NAME}] Cleaned up {deleted_count} expired cache entries")
                 self.stats.evictions += deleted_count
         except Exception as e:
             logger.error(f"[{APP_NAME}] Error cleaning up expired entries: {e}")
-
-    def _cleanup_expired(self):
-        """Clean up expired cache entries"""
-        logger.debug(f"[{APP_NAME}] Cleaning up expired cache entries...")
-
-        connection = self._get_connection()
-        if not connection:
-            logger.error(f"[{APP_NAME}] Could not connect to database for cache cleanup")
-            return
-
-        try:
-            with connection.cursor() as cursor:
-                self._cleanup_expired_with_cursor(cursor)
-                connection.commit()
-        except Exception as e:
-            logger.error(f"[{APP_NAME}] Error during cache cleanup: {e}")
-            connection.rollback()
-        finally:
-            connection.close()
 
     def clear(self):
         """Clear all cache entries"""

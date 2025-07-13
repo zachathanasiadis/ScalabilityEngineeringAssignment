@@ -3,8 +3,8 @@ from db.db_manager import DatabaseManager
 import logging
 
 logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+    format="%(message)s",
     handlers=[
         logging.StreamHandler(),
         logging.FileHandler("worker.log")
@@ -18,7 +18,10 @@ class TaskQueue:
 
     def connect(self):
         """Connect to the database"""
-        return self.db_manager.connect()
+        if not self.db_manager.connect()["error"]:
+            return True
+        else:
+            return False
 
     def close(self):
         """Close database connection"""
