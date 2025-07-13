@@ -127,7 +127,7 @@ async def release_backend(backend: str):
             logger.debug(f"Released backend {backend} (connections: {backend_connections[backend]})")
 
 @app.middleware("http")
-async def rate_limited_load_balanced_proxy(request: Request):
+async def rate_limited_load_balanced_proxy(request: Request, call_next):
     # Get client IP
     client_ip = get_client_ip(request)
 
@@ -144,10 +144,15 @@ async def rate_limited_load_balanced_proxy(request: Request):
             }
         )
 
+    # Special handling for internal endpoints
+    path = request.url.path
+    if path.startswith("/lb/"):
+        # For internal loadbalancer endpoints, bypass proxy and call the next middleware
+        return await call_next(request)
+
     # Select backend based on strategy
     backend = await select_backend()
 
-    path = request.url.path
     query = request.url.query
     method = request.method
     headers = dict(request.headers)
@@ -169,15 +174,22 @@ async def rate_limited_load_balanced_proxy(request: Request):
                 timeout=10.0
             )
 
+        # Create a response with the same status code and headers
+        starlette_response = Response(
+            content=response.content,
+            status_code=response.status_code,
+            headers=dict(response.headers)
+        )
+
         # Add rate limit headers to response
-        response.headers["X-RateLimit-Limit"] = str(RATE_LIMIT_REQUESTS)
-        response.headers["X-RateLimit-Window"] = str(RATE_LIMIT_WINDOW)
-        response.headers["X-RateLimit-Remaining"] = str(max(0, RATE_LIMIT_REQUESTS - len(rate_limit_storage[client_ip])))
-        response.headers["X-LB-Strategy"] = STRATEGY
-        response.headers["X-LB-Backend"] = backend
+        starlette_response.headers["X-RateLimit-Limit"] = str(RATE_LIMIT_REQUESTS)
+        starlette_response.headers["X-RateLimit-Window"] = str(RATE_LIMIT_WINDOW)
+        starlette_response.headers["X-RateLimit-Remaining"] = str(max(0, RATE_LIMIT_REQUESTS - len(rate_limit_storage[client_ip])))
+        starlette_response.headers["X-LB-Strategy"] = STRATEGY
+        starlette_response.headers["X-LB-Backend"] = backend
 
         logger.info(f"Response {response.status_code} from {backend} for {method} {path}")
-        return response
+        return starlette_response
     except httpx.RequestError as e:
         logger.error(f"Error contacting backend {backend}: {e}")
         return Response(content=f"Backend unreachable: {e}", status_code=502)

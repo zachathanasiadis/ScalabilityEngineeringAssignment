@@ -22,12 +22,25 @@ class DatabaseManager:
             self.connection = psycopg.connect(conn_string)
             self.cursor = self.connection.cursor()
             print("Connected to the database successfully.")
-            return True
+            return {"success": True, "error": None}
         except Exception as error:
-            print(f"Error while connecting to PostgreSQL: {error}")
+            error_msg = f"Error while connecting to PostgreSQL: {error}"
+            print(error_msg)
             self.connection = None
             self.cursor = None
-            return False
+
+            # Return detailed error information
+            return {
+                "success": False,
+                "error": str(error),
+                "details": {
+                    "db_name": self.db_name,
+                    "db_user": self.db_user,
+                    "db_host": self.db_host,
+                    "db_port": self.db_port,
+                    "connection_string": f"dbname={self.db_name} user={self.db_user} host={self.db_host} port={self.db_port}"
+                }
+            }
 
     def close(self):
         """Close the database connection"""

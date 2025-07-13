@@ -2,21 +2,24 @@ version: '3.8'
 
 services:
   # PostgreSQL Database
-  db:
+  postgres:
     image: postgres:15
+    container_name: postgres_db
     environment:
-      POSTGRES_DB: hashdb
-      POSTGRES_USER: hashuser
-      POSTGRES_PASSWORD: hashpass
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - POSTGRES_DB=${DB_NAME:-task_queue_db}
+      - POSTGRES_USER=${DB_USER:-nytrez}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-postgres123}
     ports:
       - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U hashuser -d hashdb"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-nytrez} -d ${DB_NAME:-task_queue_db}"]
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   # Load Balancer
   loadbalancer:
@@ -28,9 +31,14 @@ services:
     environment:
       - LB_STRATEGY=round_robin
     depends_on:
-      - app1
-      - app2
-      - app3
+      postgres:
+        condition: service_healthy
+      app1:
+        condition: service_healthy
+      app2:
+        condition: service_healthy
+      app3:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/lb/health"]
       interval: 30s
@@ -41,14 +49,14 @@ services:
   app1:
     build: .
     environment:
-      - DB_NAME=hashdb
-      - DB_USER=hashuser
-      - DB_PASSWORD=hashpass
-      - DB_HOST=db
+      - DB_NAME=${DB_NAME:-task_queue_db}
+      - DB_USER=${DB_USER:-nytrez}
+      - DB_PASSWORD=${DB_PASSWORD:-postgres123}
+      - DB_HOST=postgres
       - DB_PORT=5432
       - APP_NAME=hash-api-1
     depends_on:
-      db:
+      postgres:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -60,14 +68,14 @@ services:
   app2:
     build: .
     environment:
-      - DB_NAME=hashdb
-      - DB_USER=hashuser
-      - DB_PASSWORD=hashpass
-      - DB_HOST=db
+      - DB_NAME=${DB_NAME:-task_queue_db}
+      - DB_USER=${DB_USER:-nytrez}
+      - DB_PASSWORD=${DB_PASSWORD:-postgres123}
+      - DB_HOST=postgres
       - DB_PORT=5432
       - APP_NAME=hash-api-2
     depends_on:
-      db:
+      postgres:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -79,14 +87,14 @@ services:
   app3:
     build: .
     environment:
-      - DB_NAME=hashdb
-      - DB_USER=hashuser
-      - DB_PASSWORD=hashpass
-      - DB_HOST=db
+      - DB_NAME=${DB_NAME:-task_queue_db}
+      - DB_USER=${DB_USER:-nytrez}
+      - DB_PASSWORD=${DB_PASSWORD:-postgres123}
+      - DB_HOST=postgres
       - DB_PORT=5432
       - APP_NAME=hash-api-3
     depends_on:
-      db:
+      postgres:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -99,14 +107,14 @@ services:
     build: .
     command: python run_worker.py
     environment:
-      - DB_NAME=hashdb
-      - DB_USER=hashuser
-      - DB_PASSWORD=hashpass
-      - DB_HOST=db
+      - DB_NAME=${DB_NAME:-task_queue_db}
+      - DB_USER=${DB_USER:-nytrez}
+      - DB_PASSWORD=${DB_PASSWORD:-postgres123}
+      - DB_HOST=postgres
       - DB_PORT=5432
       - WORKER_NAME=worker-1
     depends_on:
-      db:
+      postgres:
         condition: service_healthy
     restart: unless-stopped
 
@@ -115,14 +123,14 @@ services:
     build: .
     command: python run_worker.py
     environment:
-      - DB_NAME=hashdb
-      - DB_USER=hashuser
-      - DB_PASSWORD=hashpass
-      - DB_HOST=db
+      - DB_NAME=${DB_NAME:-task_queue_db}
+      - DB_USER=${DB_USER:-nytrez}
+      - DB_PASSWORD=${DB_PASSWORD:-postgres123}
+      - DB_HOST=postgres
       - DB_PORT=5432
       - WORKER_NAME=worker-2
     depends_on:
-      db:
+      postgres:
         condition: service_healthy
     restart: unless-stopped
 
@@ -131,16 +139,17 @@ services:
     build: .
     command: python run_worker.py
     environment:
-      - DB_NAME=hashdb
-      - DB_USER=hashuser
-      - DB_PASSWORD=hashpass
-      - DB_HOST=db
+      - DB_NAME=${DB_NAME:-task_queue_db}
+      - DB_USER=${DB_USER:-nytrez}
+      - DB_PASSWORD=${DB_PASSWORD:-postgres123}
+      - DB_HOST=postgres
       - DB_PORT=5432
       - WORKER_NAME=worker-3
     depends_on:
-      db:
+      postgres:
         condition: service_healthy
     restart: unless-stopped
 
 volumes:
   postgres_data:
+    driver: local

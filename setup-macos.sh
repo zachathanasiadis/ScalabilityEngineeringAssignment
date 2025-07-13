@@ -87,7 +87,6 @@ optimize_docker_macos() {
 create_directories() {
     print_header "Creating necessary directories"
 
-    mkdir -p monitoring
     mkdir -p logs
     mkdir -p backup
 
@@ -98,30 +97,8 @@ create_directories() {
 create_monitoring_config() {
     print_header "Creating monitoring configuration"
 
-    cat > monitoring/prometheus.yml << EOF
-global:
-  scrape_interval: 15s
-
-scrape_configs:
-  - job_name: 'prometheus'
-    static_configs:
-      - targets: ['localhost:9090']
-
-  - job_name: 'loadbalancer'
-    static_configs:
-      - targets: ['loadbalancer:8000']
-    metrics_path: '/metrics'
-
-  - job_name: 'postgres'
-    static_configs:
-      - targets: ['db:5432']
-
-  - job_name: 'redis'
-    static_configs:
-      - targets: ['redis:6379']
-EOF
-
-    print_status "Monitoring configuration created"
+    # Monitoring configuration removed - no longer using Prometheus
+    print_status "Monitoring configuration skipped (removed from project)"
 }
 
 # Create database initialization script
@@ -184,10 +161,28 @@ start_system() {
     print_header "Starting the system"
 
     print_status "Starting core services..."
-    docker-compose -f docker-compose.production.yml up -d db redis
+    # Database runs on host - no need to start containerized DB
 
-    print_status "Waiting for database to be ready..."
-    sleep 10
+    print_status "Checking local database connection..."
+    # Check if local PostgreSQL is running and accessible
+    if ! psql -h localhost -U nytrez -d task_queue_db -c '\q' 2>/dev/null; then
+        print_error "Cannot connect to local PostgreSQL database!"
+        print_status "Please ensure:"
+        print_status "1. PostgreSQL is running on localhost:5432"
+        print_status "2. Database 'task_queue_db' exists"
+        print_status "3. User 'nytrez' has access to the database"
+        print_status "4. Set DB_PASSWORD environment variable if needed"
+        exit 1
+    fi
+    print_status "Local database connection verified"
+
+    print_status "Setting up environment variables..."
+    # Export environment variables for Docker Compose
+    export DB_NAME=task_queue_db
+    export DB_USER=nytrez
+    export DB_PASSWORD=${DB_PASSWORD:-""}
+    export DB_HOST=host.docker.internal
+    export DB_PORT=5432
 
     print_status "Starting application services..."
     docker-compose -f docker-compose.production.yml up -d
@@ -209,18 +204,13 @@ check_health() {
     fi
 
     # Check database
-    if docker-compose -f docker-compose.production.yml exec -T db pg_isready -U hashuser -d hashdb &> /dev/null; then
-        print_status "✓ Database is healthy"
+    if psql -h localhost -U nytrez -d task_queue_db -c '\q' 2>/dev/null; then
+        print_status "✓ Local database is healthy"
     else
-        print_warning "✗ Database health check failed"
+        print_warning "✗ Local database health check failed"
     fi
 
-    # Check Redis
-    if docker-compose -f docker-compose.production.yml exec -T redis redis-cli ping &> /dev/null; then
-        print_status "✓ Redis is healthy"
-    else
-        print_warning "✗ Redis health check failed"
-    fi
+
 }
 
 # Display system information
@@ -228,10 +218,10 @@ display_info() {
     print_header "System Information"
 
     echo "🌐 Application URL: http://localhost:8000"
-    echo "📊 Grafana Dashboard: http://localhost:3000 (admin/admin)"
-    echo "📈 Prometheus: http://localhost:9090"
+
+
     echo "🗄️  Database: localhost:5432"
-    echo "🔴 Redis: localhost:6379"
+
     echo ""
     echo "📚 API Documentation:"
     echo "  - Health Check: GET /health"
