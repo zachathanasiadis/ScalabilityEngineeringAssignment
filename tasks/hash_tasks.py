@@ -1,8 +1,8 @@
 from passlib.hash import argon2
 import hashlib
 import time
-from passlib.hash import argon2
 from cache.shared_cache import shared_cache
+
 
 def md5_task(parameters):
     """Task handler for calculating MD5 hash
@@ -37,6 +37,7 @@ def md5_task(parameters):
 
     return result
 
+
 def sha256_task(parameters):
     """Task handler for calculating SHA256 hash
 
@@ -68,3 +69,25 @@ def sha256_task(parameters):
     shared_cache.set(cache_key, result, ttl=3600)  # Cache for 1 hour
 
     return result
+
+
+def argon2_task(parameters):
+    start_time = time.time()
+
+    # Get the string to hash
+    string = parameters.get('string', '') if parameters else ''
+
+    # Calculate Argon 2 hash
+    hashed_string = argon2.using(
+        time_cost=6,     # Higher = slower
+        memory_cost=65536,  # In KB (64 MB)
+        parallelism=2
+    ).hash(string)
+
+    end_time = time.time()
+
+    return {
+        'original_string': string,
+        'argon2_hash': hashed_string,
+        'execution_time_seconds': end_time - start_time
+    }
