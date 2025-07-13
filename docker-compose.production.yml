@@ -1,0 +1,269 @@
+version: '3.8'
+
+networks:
+  # Frontend network for load balancer
+  frontend:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+  # Backend network for apps and database
+  backend:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/16
+
+  # Worker network for background processing
+  worker_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.22.0.0/16
+
+services:
+  # PostgreSQL Database with optimized settings
+  db:
+    image: postgres:15-alpine
+    container_name: hashdb
+    environment:
+      POSTGRES_DB: hashdb
+      POSTGRES_USER: hashuser
+      POSTGRES_PASSWORD: hashpass
+      # PostgreSQL optimization settings
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    networks:
+      - backend
+      - worker_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hashuser -d hashdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '1.0'
+          memory: 1G
+    restart: unless-stopped
+    command: |
+      postgres
+      -c max_connections=200
+      -c shared_buffers=256MB
+      -c effective_cache_size=1GB
+      -c work_mem=4MB
+      -c maintenance_work_mem=64MB
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+
+  # Redis for enhanced caching (optional improvement)
+  redis:
+    image: redis:7-alpine
+    container_name: redis_cache
+    ports:
+      - "6379:6379"
+    networks:
+      - backend
+    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    restart: unless-stopped
+
+  # Load Balancer with rate limiting
+  loadbalancer:
+    build:
+      context: .
+      dockerfile: loadbalancer/Dockerfile
+    container_name: lb_main
+    ports:
+      - "8000:8000"
+    environment:
+      - LB_STRATEGY=least_connections
+      - RATE_LIMIT_REQUESTS=100
+      - RATE_LIMIT_WINDOW=60
+    depends_on:
+      - app1
+      - app2
+      - app3
+    networks:
+      - frontend
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/lb/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+    restart: unless-stopped
+
+  # App Instance Template
+  app1: &app_template
+    build: .
+    environment:
+      - DB_NAME=hashdb
+      - DB_USER=hashuser
+      - DB_PASSWORD=hashpass
+      - DB_HOST=db
+      - DB_PORT=5432
+      - APP_NAME=hash-api-1
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    restart: unless-stopped
+
+  # Additional app instances
+  app2:
+    <<: *app_template
+    environment:
+      - DB_NAME=hashdb
+      - DB_USER=hashuser
+      - DB_PASSWORD=hashpass
+      - DB_HOST=db
+      - DB_PORT=5432
+      - APP_NAME=hash-api-2
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+
+  app3:
+    <<: *app_template
+    environment:
+      - DB_NAME=hashdb
+      - DB_USER=hashuser
+      - DB_PASSWORD=hashpass
+      - DB_HOST=db
+      - DB_PORT=5432
+      - APP_NAME=hash-api-3
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+
+  # Worker Template
+  worker1: &worker_template
+    build: .
+    command: python run_worker.py
+    environment:
+      - DB_NAME=hashdb
+      - DB_USER=hashuser
+      - DB_PASSWORD=hashpass
+      - DB_HOST=db
+      - DB_PORT=5432
+      - WORKER_NAME=worker-1
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - worker_net
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    restart: unless-stopped
+
+  worker2:
+    <<: *worker_template
+    environment:
+      - DB_NAME=hashdb
+      - DB_USER=hashuser
+      - DB_PASSWORD=hashpass
+      - DB_HOST=db
+      - DB_PORT=5432
+      - WORKER_NAME=worker-2
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+
+  worker3:
+    <<: *worker_template
+    environment:
+      - DB_NAME=hashdb
+      - DB_USER=hashuser
+      - DB_PASSWORD=hashpass
+      - DB_HOST=db
+      - DB_PORT=5432
+      - WORKER_NAME=worker-3
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+
+  # Monitoring and metrics (optional)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - backend
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  grafana_data:
+    driver: local
