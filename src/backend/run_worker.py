@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-import time
-import sys
 from db.db_manager import DatabaseManager
 from queue_service.queue_manager import TaskQueue
 from worker.worker import Worker

@@ -19,8 +19,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy backend application code
 COPY backend/ .
 
-# Copy run_worker.py from src root
-COPY run_worker.py .
+# Copy run_worker.py from backend directory
+COPY backend/run_worker.py .
 
 # Expose port (will be used by app instances)
 EXPOSE 8000
