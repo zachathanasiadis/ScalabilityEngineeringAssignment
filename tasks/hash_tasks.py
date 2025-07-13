@@ -1,5 +1,6 @@
 import hashlib
 import time
+from cache.shared_cache import shared_cache
 
 def md5_task(parameters):
     """Task handler for calculating MD5 hash
@@ -22,11 +23,17 @@ def md5_task(parameters):
 
     end_time = time.time()
 
-    return {
+    result = {
         'original_string': string,
         'md5_hash': hashed_string,
         'execution_time_seconds': end_time - start_time
     }
+
+    # Store result in cache for future requests
+    cache_key = f"md5:{string}"
+    shared_cache.set(cache_key, result, ttl=3600)  # Cache for 1 hour
+
+    return result
 
 def sha256_task(parameters):
     """Task handler for calculating SHA256 hash
@@ -49,8 +56,14 @@ def sha256_task(parameters):
 
     end_time = time.time()
 
-    return {
+    result = {
         'original_string': string,
         'sha256_hash': hashed_string,
         'execution_time_seconds': end_time - start_time
     }
+
+    # Store result in cache for future requests
+    cache_key = f"sha256:{string}"
+    shared_cache.set(cache_key, result, ttl=3600)  # Cache for 1 hour
+
+    return result

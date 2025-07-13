@@ -1,0 +1,146 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: hashdb
+      POSTGRES_USER: hashuser
+      POSTGRES_PASSWORD: hashpass
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hashuser -d hashdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Load Balancer
+  loadbalancer:
+    build:
+      context: .
+      dockerfile: loadbalancer/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - LB_STRATEGY=round_robin
+    depends_on:
+      - app1
+      - app2
+      - app3
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/lb/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # App Instance 1
+  app1:
+    build: .
+    environment:
+      - DB_NAME=hashdb
+      - DB_USER=hashuser
+      - DB_PASSWORD=hashpass
+      - DB_HOST=db
+      - DB_PORT=5432
+      - APP_NAME=hash-api-1
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # App Instance 2
+  app2:
+    build: .
+    environment:
+      - DB_NAME=hashdb
+      - DB_USER=hashuser
+      - DB_PASSWORD=hashpass
+      - DB_HOST=db
+      - DB_PORT=5432
+      - APP_NAME=hash-api-2
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # App Instance 3
+  app3:
+    build: .
+    environment:
+      - DB_NAME=hashdb
+      - DB_USER=hashuser
+      - DB_PASSWORD=hashpass
+      - DB_HOST=db
+      - DB_PORT=5432
+      - APP_NAME=hash-api-3
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Worker 1
+  worker1:
+    build: .
+    command: python run_worker.py
+    environment:
+      - DB_NAME=hashdb
+      - DB_USER=hashuser
+      - DB_PASSWORD=hashpass
+      - DB_HOST=db
+      - DB_PORT=5432
+      - WORKER_NAME=worker-1
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Worker 2
+  worker2:
+    build: .
+    command: python run_worker.py
+    environment:
+      - DB_NAME=hashdb
+      - DB_USER=hashuser
+      - DB_PASSWORD=hashpass
+      - DB_HOST=db
+      - DB_PORT=5432
+      - WORKER_NAME=worker-2
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Worker 3
+  worker3:
+    build: .
+    command: python run_worker.py
+    environment:
+      - DB_NAME=hashdb
+      - DB_USER=hashuser
+      - DB_PASSWORD=hashpass
+      - DB_HOST=db
+      - DB_PORT=5432
+      - WORKER_NAME=worker-3
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
