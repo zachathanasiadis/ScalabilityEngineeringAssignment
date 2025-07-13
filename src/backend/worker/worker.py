@@ -8,7 +8,7 @@ from queue_service.queue_manager import TaskQueue
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[
         logging.StreamHandler(),
@@ -82,7 +82,9 @@ class Worker:
                     task = self.task_queue.get_next_task()
 
                     if task:
-                        task_id, task_type, parameters = task
+                        task_id = task["id"]
+                        task_type = task["task_type"]
+                        parameters = task["parameters"]
                         logger.info(f"[{self.worker_name}] *** PICKED UP TASK {task_id} (type: {task_type}) ***")
 
                         # Check if we have a handler for this task type
@@ -112,7 +114,7 @@ class Worker:
                             logger.error(f"[{self.worker_name}] {error_msg}")
                             self.task_queue.complete_task(task_id, None, error_msg)
                     else:
-                        logger.debug(f"[{self.worker_name}] No tasks available, waiting {self.polling_interval}s...")
+                        #logger.debug(f"[{self.worker_name}] No tasks available, waiting {self.polling_interval}s...")
                         time.sleep(self.polling_interval)
 
                 except Exception as e:

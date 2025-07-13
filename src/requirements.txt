@@ -16,3 +16,6 @@ pytest>=7.4.0
 
 # Data validation
 pydantic>=2.4.0
+
+
+passlib

@@ -1,21 +1,19 @@
-version: '3.8'
-
 services:
   # PostgreSQL Database
   postgres:
     image: postgres:15
     container_name: postgres_db
     environment:
-      - POSTGRES_DB=${DB_NAME:-task_queue_db}
-      - POSTGRES_USER=${DB_USER:-nytrez}
-      - POSTGRES_PASSWORD=${DB_PASSWORD:-postgres123}
+      - POSTGRES_DB=${DB_NAME:-}
+      - POSTGRES_USER=${DB_USER:-}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./backend/db/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-nytrez} -d ${DB_NAME:-task_queue_db}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-} -d ${DB_NAME:-}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -47,14 +45,19 @@ services:
 
   # App Instance 1
   app1:
-    build: .
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     environment:
-      - DB_NAME=${DB_NAME:-task_queue_db}
-      - DB_USER=${DB_USER:-nytrez}
-      - DB_PASSWORD=${DB_PASSWORD:-postgres123}
+      - DB_NAME=${DB_NAME:-}
+      - DB_USER=${DB_USER:-}
+      - DB_PASSWORD=${DB_PASSWORD:-}
       - DB_HOST=postgres
       - DB_PORT=5432
       - APP_NAME=hash-api-1
+      - DB_MAX_CONNECTIONS=${DB_MAX_CONNECTIONS:-20}
+      - DB_CONNECTION_RETRIES=${DB_CONNECTION_RETRIES:-5}
+      - DB_BASE_BACKOFF=${DB_BASE_BACKOFF:-0.5}
     depends_on:
       postgres:
         condition: service_healthy
@@ -66,14 +69,19 @@ services:
 
   # App Instance 2
   app2:
-    build: .
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     environment:
-      - DB_NAME=${DB_NAME:-task_queue_db}
-      - DB_USER=${DB_USER:-nytrez}
-      - DB_PASSWORD=${DB_PASSWORD:-postgres123}
+      - DB_NAME=${DB_NAME:-}
+      - DB_USER=${DB_USER:-}
+      - DB_PASSWORD=${DB_PASSWORD:-}
       - DB_HOST=postgres
       - DB_PORT=5432
       - APP_NAME=hash-api-2
+      - DB_MAX_CONNECTIONS=${DB_MAX_CONNECTIONS:-20}
+      - DB_CONNECTION_RETRIES=${DB_CONNECTION_RETRIES:-5}
+      - DB_BASE_BACKOFF=${DB_BASE_BACKOFF:-0.5}
     depends_on:
       postgres:
         condition: service_healthy
@@ -85,14 +93,19 @@ services:
 
   # App Instance 3
   app3:
-    build: .
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     environment:
-      - DB_NAME=${DB_NAME:-task_queue_db}
-      - DB_USER=${DB_USER:-nytrez}
-      - DB_PASSWORD=${DB_PASSWORD:-postgres123}
+      - DB_NAME=${DB_NAME:-}
+      - DB_USER=${DB_USER:-}
+      - DB_PASSWORD=${DB_PASSWORD:-}
       - DB_HOST=postgres
       - DB_PORT=5432
       - APP_NAME=hash-api-3
+      - DB_MAX_CONNECTIONS=${DB_MAX_CONNECTIONS:-20}
+      - DB_CONNECTION_RETRIES=${DB_CONNECTION_RETRIES:-5}
+      - DB_BASE_BACKOFF=${DB_BASE_BACKOFF:-0.5}
     depends_on:
       postgres:
         condition: service_healthy
@@ -104,15 +117,20 @@ services:
 
   # Worker 1
   worker1:
-    build: .
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     command: python run_worker.py
     environment:
-      - DB_NAME=${DB_NAME:-task_queue_db}
-      - DB_USER=${DB_USER:-nytrez}
-      - DB_PASSWORD=${DB_PASSWORD:-postgres123}
+      - DB_NAME=${DB_NAME:-}
+      - DB_USER=${DB_USER:-}
+      - DB_PASSWORD=${DB_PASSWORD:-}
       - DB_HOST=postgres
       - DB_PORT=5432
       - WORKER_NAME=worker-1
+      - DB_MAX_CONNECTIONS=${DB_MAX_CONNECTIONS:-20}
+      - DB_CONNECTION_RETRIES=${DB_CONNECTION_RETRIES:-5}
+      - DB_BASE_BACKOFF=${DB_BASE_BACKOFF:-0.5}
     depends_on:
       postgres:
         condition: service_healthy
@@ -120,15 +138,20 @@ services:
 
   # Worker 2
   worker2:
-    build: .
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     command: python run_worker.py
     environment:
-      - DB_NAME=${DB_NAME:-task_queue_db}
-      - DB_USER=${DB_USER:-nytrez}
-      - DB_PASSWORD=${DB_PASSWORD:-postgres123}
+      - DB_NAME=${DB_NAME:-}
+      - DB_USER=${DB_USER:-}
+      - DB_PASSWORD=${DB_PASSWORD:-}
       - DB_HOST=postgres
       - DB_PORT=5432
       - WORKER_NAME=worker-2
+      - DB_MAX_CONNECTIONS=${DB_MAX_CONNECTIONS:-20}
+      - DB_CONNECTION_RETRIES=${DB_CONNECTION_RETRIES:-5}
+      - DB_BASE_BACKOFF=${DB_BASE_BACKOFF:-0.5}
     depends_on:
       postgres:
         condition: service_healthy
@@ -136,15 +159,20 @@ services:
 
   # Worker 3
   worker3:
-    build: .
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     command: python run_worker.py
     environment:
-      - DB_NAME=${DB_NAME:-task_queue_db}
-      - DB_USER=${DB_USER:-nytrez}
-      - DB_PASSWORD=${DB_PASSWORD:-postgres123}
+      - DB_NAME=${DB_NAME:-}
+      - DB_USER=${DB_USER:-}
+      - DB_PASSWORD=${DB_PASSWORD:-}
       - DB_HOST=postgres
       - DB_PORT=5432
       - WORKER_NAME=worker-3
+      - DB_MAX_CONNECTIONS=${DB_MAX_CONNECTIONS:-20}
+      - DB_CONNECTION_RETRIES=${DB_CONNECTION_RETRIES:-5}
+      - DB_BASE_BACKOFF=${DB_BASE_BACKOFF:-0.5}
     depends_on:
       postgres:
         condition: service_healthy

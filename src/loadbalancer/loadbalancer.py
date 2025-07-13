@@ -12,7 +12,7 @@ app = FastAPI()
 
 # --- Setup Logging ---
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger("loadbalancer")
@@ -22,8 +22,6 @@ backends = [
     "http://app1:8000",
     "http://app2:8000",
     "http://app3:8000",
-    "http://app4:8000",
-    "http://app5:8000"
 ]
 
 # Load balancing strategy configuration
@@ -39,7 +37,7 @@ backend_connections = {backend: 0 for backend in backends}
 lock = asyncio.Lock()
 
 # Rate limiting configuration
-RATE_LIMIT_REQUESTS = 100  # requests per window
+RATE_LIMIT_REQUESTS = 60  # requests per window
 RATE_LIMIT_WINDOW = 60     # window size in seconds
 RATE_LIMIT_CLEANUP_INTERVAL = 300  # cleanup old entries every 5 minutes
 

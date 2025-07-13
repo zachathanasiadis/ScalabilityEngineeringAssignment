@@ -10,7 +10,7 @@ from db.db_manager import DatabaseManager
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[
         logging.StreamHandler(),
@@ -24,7 +24,7 @@ APP_NAME = os.getenv("APP_NAME", "hash-api-unknown")
 logger.info(f"=== Starting {APP_NAME} ===")
 
 try:
-    from cache.shared_cache import shared_cache
+    from db.shared_cache import shared_cache
     logger.info(f"[{APP_NAME}] Successfully initialized shared cache")
 except Exception as e:
     logger.error(f"[{APP_NAME}] Warning: Could not initialize shared cache: {e}")
@@ -98,7 +98,9 @@ def convert_str_to_sha256(input: InputString):
 
     try:
         # Add task to queue
+        logger.info(f"[{APP_NAME}] Adding task to queue for SHA256: {string}")
         task_id = task_queue.add_task('sha256', {'string': string})
+        logger.info(f"[{APP_NAME}] Task ID: {task_id}")
 
         if task_id is None:
             logger.error(f"[{APP_NAME}] Failed to add task to queue for SHA256: {string}")
@@ -140,7 +142,9 @@ def convert_str_to_md5(input: InputString):
 
     try:
         # Add task to queue
+        logger.info(f"[{APP_NAME}] Adding task to queue for MD5: {string}")
         task_id = task_queue.add_task('md5', {'string': string})
+        logger.info(f"[{APP_NAME}] Task ID: {task_id}")
 
         if task_id is None:
             logger.error(f"[{APP_NAME}] Failed to add task to queue for MD5: {string}")

@@ -1,6 +1,16 @@
 import json
 from db.db_manager import DatabaseManager
+import logging
 
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler("worker.log")
+    ]
+)
+logger = logging.getLogger(__name__)
 class TaskQueue:
     def __init__(self, db_manager=None):
         """Initialize the TaskQueue with a database manager"""
@@ -32,6 +42,7 @@ class TaskQueue:
         Returns:
             int: ID of the created task
         """
+        logger.info(f"[QueueManager] Adding task to queue: {task_type} with parameters: {parameters}")
         if parameters and not isinstance(parameters, str):
             parameters = json.dumps(parameters)
 

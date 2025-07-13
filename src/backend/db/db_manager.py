@@ -1,6 +1,7 @@
 import os
 import psycopg
 from dotenv import load_dotenv
+from .connection_limiter import create_limited_connection
 
 load_dotenv()
 
@@ -13,32 +14,33 @@ class DatabaseManager:
         self.db_port = db_port or os.getenv("DB_PORT", "")
         self.connection = None
         self.cursor = None
-        # Don't connect in __init__, let the user explicitly call connect()
 
     def connect(self):
-        """Connect to the PostgreSQL database server"""
-        try:
-            conn_string = f"dbname={self.db_name} user={self.db_user} password={self.db_password} host={self.db_host} port={self.db_port}"
-            self.connection = psycopg.connect(conn_string)
+        """Connect to the PostgreSQL database server with connection limiting"""
+        result = create_limited_connection(
+            self.db_name,
+            self.db_user,
+            self.db_password,
+            self.db_host,
+            self.db_port
+        )
+
+        if result["success"]:
+            self.connection = result["connection"]
             self.cursor = self.connection.cursor()
-            print("Connected to the database successfully.")
             return {"success": True, "error": None}
-        except Exception as error:
-            error_msg = f"Error while connecting to PostgreSQL: {error}"
-            print(error_msg)
+        else:
             self.connection = None
             self.cursor = None
-
-            # Return detailed error information
             return {
                 "success": False,
-                "error": str(error),
+                "error": result["error"],
                 "details": {
                     "db_name": self.db_name,
                     "db_user": self.db_user,
                     "db_host": self.db_host,
                     "db_port": self.db_port,
-                    "connection_string": f"dbname={self.db_name} user={self.db_user} host={self.db_host} port={self.db_port}"
+                    **result.get("details", {})
                 }
             }
 

@@ -1,7 +1,7 @@
 from passlib.hash import argon2
 import hashlib
 import time
-from cache.shared_cache import shared_cache
+from db.shared_cache import shared_cache
 
 
 def md5_task(parameters):
