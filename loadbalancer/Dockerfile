@@ -5,7 +5,7 @@ FROM python:3.13-slim-bookworm
 WORKDIR /app
 
 # Copy the application code
-COPY . /app
+COPY ./loadbalancer /app
 
 # Install dependencies
 RUN pip install --no-cache-dir fastapi httpx uvicorn
