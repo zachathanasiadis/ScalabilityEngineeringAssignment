@@ -107,7 +107,7 @@ This architecture allows for scalable, asynchronous processing of computationall
   - **Description:** Queue a task to compute the MD5 hash of the provided data.
   - **Request Body Example:**
     ```json
-    { "data": "<your string to hash>" }
+    { "string": "<your string to hash>" }
     ```
     Replace `<your string to hash>` with the actual value you want to hash.
 
@@ -115,7 +115,7 @@ This architecture allows for scalable, asynchronous processing of computationall
   - **Description:** Queue a task to compute the SHA256 hash of the provided data.
   - **Request Body Example:**
     ```json
-    { "data": "<your string to hash>" }
+    { "string": "<your string to hash>" }
     ```
     Replace `<your string to hash>` with the actual value you want to hash.
 
@@ -123,7 +123,7 @@ This architecture allows for scalable, asynchronous processing of computationall
   - **Description:** Queue a task to compute the Argon2 hash of the provided data.
   - **Request Body Example:**
     ```json
-    { "data": "<your string to hash>" }
+    { "string": "<your string to hash>" }
     ```
     Replace `<your string to hash>` with the actual value you want to hash.
 
