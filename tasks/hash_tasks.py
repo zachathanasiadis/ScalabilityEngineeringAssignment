@@ -1,5 +1,7 @@
+from passlib.hash import argon2
 import hashlib
 import time
+from passlib.hash import argon2
 from cache.shared_cache import shared_cache
 
 def md5_task(parameters):
@@ -61,7 +63,6 @@ def sha256_task(parameters):
         'sha256_hash': hashed_string,
         'execution_time_seconds': end_time - start_time
     }
-
     # Store result in cache for future requests
     cache_key = f"sha256:{string}"
     shared_cache.set(cache_key, result, ttl=3600)  # Cache for 1 hour
