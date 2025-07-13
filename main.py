@@ -3,6 +3,7 @@ from pydantic import BaseModel
 import hashlib
 from queue_service.queue_manager import TaskQueue
 from db.db_manager import DatabaseManager
+from cache.shared_cache import shared_cache
 import json
 
 app = FastAPI()
@@ -18,9 +19,6 @@ if db_manager.connect():
 else:
     print("Failed to connect to database during startup. Please check your database configuration.")
 
-str_to_hash256_mappings = {}
-str_to_md5_mappings = {}
-
 class InputString(BaseModel):
     string: str
 
@@ -28,6 +26,13 @@ class InputString(BaseModel):
 @app.post("/hash/sha256")
 def convert_str_to_sha256(input: InputString):
     string = input.string
+
+    # Check cache first
+    cache_key = f"sha256:{string}"
+    cached_result = shared_cache.get(cache_key)
+
+    if cached_result:
+        return {"result": cached_result, "source": "cache"}
 
     # Establish a new connection for this request
     if not db_manager.connect():
@@ -50,6 +55,13 @@ def convert_str_to_sha256(input: InputString):
 def convert_str_to_md5(input: InputString):
     string = input.string
 
+    # Check cache first
+    cache_key = f"md5:{string}"
+    cached_result = shared_cache.get(cache_key)
+
+    if cached_result:
+        return {"result": cached_result, "source": "cache"}
+
     # Establish a new connection for this request
     if not db_manager.connect():
         raise HTTPException(status_code=500, detail="Database connection failed")
@@ -69,7 +81,46 @@ def convert_str_to_md5(input: InputString):
 
 @app.get("/hashes")
 def get_hashes():
-    return {"SHA256": str_to_hash256_mappings, "MD5": str_to_md5_mappings}
+    """Get all computed hashes from database and cache"""
+    # Connect to the database
+    if not db_manager.connect():
+        raise HTTPException(status_code=500, detail="Database connection failed")
+
+    try:
+        # Query completed tasks from database
+        db_manager.cursor.execute("""
+            SELECT task_type, result
+            FROM tasks
+            WHERE status = 'completed' AND result IS NOT NULL
+        """)
+
+        completed_tasks = db_manager.cursor.fetchall()
+
+        sha256_hashes = {}
+        md5_hashes = {}
+
+        for task_type, result in completed_tasks:
+            if isinstance(result, str):
+                try:
+                    parsed_result = json.loads(result)
+                except json.JSONDecodeError:
+                    continue
+            else:
+                parsed_result = result
+
+            if isinstance(parsed_result, dict):
+                if task_type == 'sha256' and 'sha256_hash' in parsed_result and 'original_string' in parsed_result:
+                    sha256_hashes[parsed_result['original_string']] = parsed_result['sha256_hash']
+                elif task_type == 'md5' and 'md5_hash' in parsed_result and 'original_string' in parsed_result:
+                    md5_hashes[parsed_result['original_string']] = parsed_result['md5_hash']
+
+        return {
+            "SHA256": sha256_hashes,
+            "MD5": md5_hashes,
+            "cache_stats": shared_cache.get_stats()
+        }
+    finally:
+        db_manager.close()
 
 
 @app.get("/task/{task_id}")
@@ -117,14 +168,14 @@ def get_task_status(task_id: int):
                 # Result might already be a dict from psycopg
                 parsed_result = result
 
-        # Add the hash to our mappings if completed successfully
-        if status == 'completed' and parsed_result:
-            if task_type == 'md5' and isinstance(parsed_result, dict):
-                if 'md5_hash' in parsed_result and 'original_string' in parsed_result:
-                    str_to_md5_mappings[parsed_result['original_string']] = parsed_result['md5_hash']
-            elif task_type == 'sha256' and isinstance(parsed_result, dict):
-                if 'sha256_hash' in parsed_result and 'original_string' in parsed_result:
-                    str_to_hash256_mappings[parsed_result['original_string']] = parsed_result['sha256_hash']
+        # Cache the result if completed successfully
+        if status == 'completed' and parsed_result and isinstance(parsed_result, dict):
+            if task_type == 'md5' and 'md5_hash' in parsed_result and 'original_string' in parsed_result:
+                cache_key = f"md5:{parsed_result['original_string']}"
+                shared_cache.set(cache_key, parsed_result, ttl=3600)  # Cache for 1 hour
+            elif task_type == 'sha256' and 'sha256_hash' in parsed_result and 'original_string' in parsed_result:
+                cache_key = f"sha256:{parsed_result['original_string']}"
+                shared_cache.set(cache_key, parsed_result, ttl=3600)  # Cache for 1 hour
 
         # Return task information
         return {
@@ -140,3 +191,22 @@ def get_task_status(task_id: int):
 
     finally:
         db_manager.close()
+
+
+@app.get("/health")
+def health_check():
+    """Health check endpoint for load balancer"""
+    return {"status": "healthy", "service": "hash-api"}
+
+
+@app.get("/cache/stats")
+def cache_stats():
+    """Get cache statistics"""
+    return shared_cache.get_stats()
+
+
+@app.post("/cache/clear")
+def clear_cache():
+    """Clear all cache entries"""
+    shared_cache.clear()
+    return {"message": "Cache cleared successfully"}
